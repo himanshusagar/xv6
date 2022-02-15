@@ -10,12 +10,11 @@
 int
 sys_demo(void)
 {
-    int pid;
+  complexData* cData;
+  if( argptr(0, (void*)&cData, sizeof(*cData) ) < 0) 
+    return -1;
 
-    if(argint(0, &pid) < 0)
-        return -1;
-    cprintf("PID %d" , pid);
-    return demo(pid);
+  return demo(cData);
 }
 
 int
