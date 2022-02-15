@@ -473,6 +473,15 @@ wakeup(void *chan)
   release(&ptable.lock);
 }
 
+
+// Demo syscall to return killed status.
+int
+demo(int pid)
+{
+    struct proc *curproc = myproc();
+    return curproc->killed;
+}
+
 // Kill the process with the given pid.
 // Process won't exit until it returns
 // to user space (see trap in trap.c).

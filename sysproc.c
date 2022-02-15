@@ -8,6 +8,17 @@
 #include "proc.h"
 
 int
+sys_demo(void)
+{
+    int pid;
+
+    if(argint(0, &pid) < 0)
+        return -1;
+    cprintf("PID %d" , pid);
+    return demo(pid);
+}
+
+int
 sys_fork(void)
 {
   return fork();
