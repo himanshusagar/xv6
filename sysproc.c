@@ -89,3 +89,45 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+//changed: added wrapper here
+int sys_mencrypt(void) {
+  int len;
+  char * virtual_addr;
+
+  if(argint(1, &len) < 0)
+    return -1;
+  if (len <= 0) {
+    return -1;
+  }
+  if(argptr(0, &virtual_addr, 1) < 0)
+    return -1;
+  if ((void *) virtual_addr >= P2V(PHYSTOP)) {
+    return -1;
+  }
+  return mencrypt(virtual_addr, len);
+}
+
+int sys_getpgtable(void) {
+  struct pt_entry * entries; 
+  int num;
+
+  if(argint(1, &num) < 0)
+    return -1;
+  if(argptr(0, (char**)&entries, num*sizeof(struct pt_entry)) < 0){
+    return -1;
+  }
+  return getpgtable(entries, num);
+}
+
+
+int sys_dump_rawphymem(void) {
+  char * physical_addr; 
+  char * buffer;
+
+  if(argptr(1, &buffer, PGSIZE) < 0)
+    return -1;
+  if(argint(0, (int*)&physical_addr) < 0)
+    return -1;
+  return dump_rawphymem(physical_addr, buffer);
+}

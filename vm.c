@@ -40,6 +40,8 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
 
   pde = &pgdir[PDX(va)];
   if(*pde & PTE_P){
+    //if (!alloc)
+      //cprintf("page directory is good\n");
     pgtab = (pte_t*)P2V(PTE_ADDR(*pde));
   } else {
     if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)
@@ -68,9 +70,15 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
   for(;;){
     if((pte = walkpgdir(pgdir, a, 1)) == 0)
       return -1;
-    if(*pte & PTE_P)
-      panic("remap");
-    *pte = pa | perm | PTE_P;
+    if(*pte & (PTE_P | PTE_E))
+      panic("p4Debug, remapping page");
+
+    if (perm & PTE_E)
+      *pte = pa | perm | PTE_E;
+    else
+      *pte = pa | perm | PTE_P;
+
+
     if(a == last)
       break;
     a += PGSIZE;
@@ -266,7 +274,7 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
     pte = walkpgdir(pgdir, (char*)a, 0);
     if(!pte)
       a = PGADDR(PDX(a) + 1, 0, 0) - PGSIZE;
-    else if((*pte & PTE_P) != 0){
+    else if((*pte & (PTE_P | PTE_E)) != 0){
       pa = PTE_ADDR(*pte);
       if(pa == 0)
         panic("kfree");
@@ -289,7 +297,7 @@ freevm(pde_t *pgdir)
     panic("freevm: no pgdir");
   deallocuvm(pgdir, KERNBASE, 0);
   for(i = 0; i < NPDENTRIES; i++){
-    if(pgdir[i] & PTE_P){
+    if(pgdir[i] & (PTE_P | PTE_E)){
       char * v = P2V(PTE_ADDR(pgdir[i]));
       kfree(v);
     }
@@ -324,9 +332,9 @@ copyuvm(pde_t *pgdir, uint sz)
     return 0;
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
-      panic("copyuvm: pte should exist");
-    if(!(*pte & PTE_P))
-      panic("copyuvm: page not present");
+      panic("p4Debug: inside copyuvm, pte should exist");
+    if(!(*pte & (PTE_P | PTE_E)))
+      panic("p4Debug: inside copyuvm, page not present");
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -352,7 +360,8 @@ uva2ka(pde_t *pgdir, char *uva)
   pte_t *pte;
 
   pte = walkpgdir(pgdir, uva, 0);
-  if((*pte & PTE_P) == 0)
+  // p4Debug: Check for page's present and encrypted flags.
+  if(((*pte & PTE_P) | (*pte & PTE_E)) == 0)
     return 0;
   if((*pte & PTE_U) == 0)
     return 0;
@@ -373,7 +382,10 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
     va0 = (uint)PGROUNDDOWN(va);
     pa0 = uva2ka(pgdir, (char*)va0);
     if(pa0 == 0)
+    {
+      //p4Debug : Cannot find page in kernel space.
       return -1;
+    }
     n = PGSIZE - (va - va0);
     if(n > len)
       n = len;
@@ -384,6 +396,160 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
   }
   return 0;
 }
+
+//This function is just like uva2ka but sets the PTE_E bit and clears PTE_P
+char* translate_and_set(pde_t *pgdir, char *uva) {
+  cprintf("p4Debug: setting PTE_E for %p, VPN %d\n", uva, PPN(uva));
+  pte_t *pte;
+  pte = walkpgdir(pgdir, uva, 0);
+
+  //p4Debug: If page is not present AND it is not encrypted.
+  if((*pte & PTE_P) == 0 && (*pte & PTE_E) == 0)
+    return 0;
+  //p4Debug: If page is already encrypted, i.e. PTE_E is set, return NULL as error;
+  if((*pte & PTE_E)) {
+    return 0;
+  }
+  // p4Debug: Check if users are allowed to use this page
+  if((*pte & PTE_U) == 0)
+    return 0;
+  //p4Debug: Set Page as encrypted and not present so that we can trap(see trap.c) to decrypt page
+  cprintf("p4Debug: PTE was %x and its pointer %p\n", *pte, pte);
+  *pte = *pte | PTE_E;
+  *pte = *pte & ~PTE_P;
+  cprintf("p4Debug: PTE is now %x\n", *pte);
+  return (char*)P2V(PTE_ADDR(*pte));
+}
+
+
+int mdecrypt(char *virtual_addr) {
+  cprintf("p4Debug:  mdecrypt VPN %d, %p, pid %d\n", PPN(virtual_addr), virtual_addr, myproc()->pid);
+  //p4Debug: virtual_addr is a virtual address in this PID's userspace.
+  struct proc * p = myproc();
+  pde_t* mypd = p->pgdir;
+  //set the present bit to true and encrypt bit to false
+  pte_t * pte = walkpgdir(mypd, virtual_addr, 0);
+  if (!pte || *pte == 0) {
+    cprintf("p4Debug: walkpgdir failed\n");
+    return -1;
+  }
+  cprintf("p4Debug: pte was %x\n", *pte);
+  *pte = *pte & ~PTE_E;
+  *pte = *pte | PTE_P;
+  cprintf("p4Debug: pte is %x\n", *pte);
+  char * original = uva2ka(mypd, virtual_addr) + OFFSET(virtual_addr);
+  cprintf("p4Debug: Original in decrypt was %p\n", original);
+  virtual_addr = (char *)PGROUNDDOWN((uint)virtual_addr);
+  cprintf("p4Debug: mdecrypt: rounded down va is %p\n", virtual_addr);
+
+  char * kvp = uva2ka(mypd, virtual_addr);
+  if (!kvp || *kvp == 0) {
+    return -1;
+  }
+  char * slider = virtual_addr;
+  for (int offset = 0; offset < PGSIZE; offset++) {
+    *slider = *slider ^ 0xFF;
+    slider++;
+  }
+  return 0;
+}
+
+int mencrypt(char *virtual_addr, int len) {
+  cprintf("p4Debug: mencrypt: %p %d\n", virtual_addr, len);
+  //the given pointer is a virtual address in this pid's userspace
+  struct proc * p = myproc();
+  pde_t* mypd = p->pgdir;
+
+  cprintf("p4Debug: mencrypt: kernel version is: %p\n", original);
+  virtual_addr = (char *)PGROUNDDOWN((uint)virtual_addr);
+  kernel_pointer = (char *)PGROUNDDOWN((uint)kernel_pointer);
+
+  //error checking first. all or nothing.
+  char * slider = virtual_addr;
+  for (int i = 0; i < len; i++) { 
+    //check page table for each translation first
+    char * kvp = uva2ka(mypd, slider);
+    cprintf("p4Debug: slider %p, kvp for err check is %p\n",slider, kvp);
+    if (!kvp) {
+      cprintf("p4Debug: mencrypt: kvp = NULL\n");
+      return -1;
+    }
+    slider = slider + PGSIZE;
+  }
+
+  //encrypt stage. Have to do this before setting flag 
+  //or else we'll page fault
+  slider = virtual_addr;
+  for (int i = 0; i < len; i++) {
+    cprintf("p4Debug: mencryptr: VPN %d, %p\n", PPN(slider), slider);
+    kvp = kernel virtual pointer
+    //virtual address in kernel space that maps to the given pointer
+    char * kvp = uva2ka(mypd, slider);
+    cprintf("p4Debug: kvp for encrypt stage is %p\n", kvp);
+    pte_t * mypte = walkpgdir(mypd, slider, 0);
+    cprintf("p4Debug: pte is %x\n", *mypte);
+    if (*mypte & PTE_E) {
+      cprintf("p4Debug: already encrypted\n");
+      slider += PGSIZE;
+      continue;
+    }
+    for (int offset = 0; offset < PGSIZE; offset++) {
+      *slider = *slider ^ 0xFF;
+      slider++;
+    }
+    char * kvp = translate_and_set(mypd, slider-PGSIZE);
+    if (!kvp) {
+      cprintf("p4Debug: translate failed!");
+      return -1;
+    }
+  }
+
+  switchuvm(myproc());
+  return 0;
+}
+
+int getpgtable(struct pt_entry* entries, int num) {
+  cprintf("p4Debug: getpgtable: %p, %d\n", entries, num);
+
+  struct proc * me = myproc();
+  int index = 0;
+  pte_t * curr_pte;
+  for (void * i = (void*) PGROUNDDOWN(((int)me->sz)); i >= 0 && index < num; i-=PGSIZE)
+  {
+    //iterate through the page table and read the entries
+    //Those entries contain the physical page number + flags
+    //curr_pte = pgtab[i];
+    curr_pte = walkpgdir(me->pgdir, i, 0);
+
+    if (*curr_pte)
+    {
+      entries[index].pdx = PDX(i); 
+      entries[index].ptx = PTX(i);
+      //convert to physical address and then shift to get PPN
+      entries[index].ppage = PPN(*curr_pte);
+      //have to set it like this because these are bit fields
+      //present is true if it's encrypted or if it's just present
+      entries[index].present = (*curr_pte & PTE_P) ? 1 : 0;
+      entries[index].writable = (*curr_pte & PTE_W) ? 1 : 0;
+      entries[index].encrypted = (*curr_pte & PTE_E) ? 1 : 0;
+      entries[index].user = (*curr_pte & PTE_U) ? 1 : 0;
+
+      entries[index].ref = 1;
+      index++;
+    }
+  }
+  return index;
+}
+
+
+int dump_rawphymem(char *physical_addr, char * buffer) {
+  cprintf("p4Debug: dump_rawphymem: %p, %p\n", physical_addr, buffer);
+  int retval = copyout(myproc()->pgdir, (uint) buffer, (void *) PGROUNDDOWN((int)P2V(physical_addr)), PGSIZE);
+  if (retval)
+    return -1;
+  return 0;
+}
+
 
 //PAGEBREAK!
 // Blank page.

@@ -91,6 +91,7 @@ kalloc(void)
     kmem.freelist = r->next;
   if(kmem.use_lock)
     release(&kmem.lock);
+  cprintf("p4Debug : kalloc returns %d %x\n", PPN(V2P(r)), V2P(r));
   return (char*)r;
 }
 
