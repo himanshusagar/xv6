@@ -506,37 +506,41 @@ int mencrypt(char *virtual_addr, int len) {
   return 0;
 }
 
-int getpgtable(struct pt_entry* entries, int num) {
-  cprintf("p4Debug: getpgtable: %p, %d\n", entries, num);
+int getpgtable(struct pt_entry* pt_entries, int num) {
+  cprintf("p4Debug: getpgtable: %p, %d\n", pt_entries, num);
 
-  struct proc * me = myproc();
-  int index = 0;
-  pte_t * curr_pte;
-  for (void * i = (void*) PGROUNDDOWN(((int)me->sz)); i >= 0 && index < num; i-=PGSIZE)
+  struct proc *curproc = myproc();
+  pde_t *pgdir = curproc->pgdir;
+  uint uva = 0;
+  if (curproc->sz % PGSIZE == 0)
+    uva = curproc->sz - PGSIZE;
+  else 
+    uva = PGROUNDDOWN(curproc->sz);
+
+  int i = 0;
+  for (;;uva -=PGSIZE)
   {
-    //iterate through the page table and read the entries
-    //Those entries contain the physical page number + flags
-    //curr_pte = pgtab[i];
-    curr_pte = walkpgdir(me->pgdir, i, 0);
+    
+    pte_t *pte = walkpgdir(pgdir, (const void *)uva, 0);
 
-    if (*curr_pte)
-    {
-      entries[index].pdx = PDX(i); 
-      entries[index].ptx = PTX(i);
-      //convert to physical address and then shift to get PPN
-      entries[index].ppage = PPN(*curr_pte);
-      //have to set it like this because these are bit fields
-      //present is true if it's encrypted or if it's just present
-      entries[index].present = (*curr_pte & PTE_P) ? 1 : 0;
-      entries[index].writable = (*curr_pte & PTE_W) ? 1 : 0;
-      entries[index].encrypted = (*curr_pte & PTE_E) ? 1 : 0;
-      entries[index].user = (*curr_pte & PTE_U) ? 1 : 0;
+    if (!(*pte & PTE_U) || !(*pte & (PTE_P | PTE_E)))
+      continue;
 
-      entries[index].ref = 1;
-      index++;
-    }
+    pt_entries[i].pdx = PDX(uva);
+    pt_entries[i].ptx = PTX(uva);
+    pt_entries[i].ppage = *pte >> PTXSHIFT;
+    pt_entries[i].present = *pte & PTE_P;
+    pt_entries[i].writable = (*pte & PTE_W) > 0;
+    pt_entries[i].encrypted = (*pte & PTE_E) > 0;
+    pt_entries[i].ref = (*pte & PTE_A) > 0;
+    //PT_A flag needs to be modified as per clock algo.
+    i ++;
+    if (uva == 0 || i == num) break;
+
   }
-  return index;
+
+  return i;
+
 }
 
 

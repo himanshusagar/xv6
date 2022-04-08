@@ -100,6 +100,7 @@ struct segdesc {
 #define PTE_P           0x001   // Present
 #define PTE_W           0x002   // Writeable
 #define PTE_U           0x004   // User
+#define PTE_A           0x020
 #define PTE_PS          0x080   // Page Size
 //p4Debug: Added PTE_E flag for encrypted pages.
 //You have 12 bits for flags according
