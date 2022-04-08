@@ -460,9 +460,7 @@ int mencrypt(char *virtual_addr, int len) {
   struct proc * p = myproc();
   pde_t* mypd = p->pgdir;
 
-  cprintf("p4Debug: mencrypt: kernel version is: %p\n", original);
   virtual_addr = (char *)PGROUNDDOWN((uint)virtual_addr);
-  kernel_pointer = (char *)PGROUNDDOWN((uint)kernel_pointer);
 
   //error checking first. all or nothing.
   char * slider = virtual_addr;
@@ -482,7 +480,7 @@ int mencrypt(char *virtual_addr, int len) {
   slider = virtual_addr;
   for (int i = 0; i < len; i++) {
     cprintf("p4Debug: mencryptr: VPN %d, %p\n", PPN(slider), slider);
-    kvp = kernel virtual pointer
+    //kvp = kernel virtual pointer
     //virtual address in kernel space that maps to the given pointer
     char * kvp = uva2ka(mypd, slider);
     cprintf("p4Debug: kvp for encrypt stage is %p\n", kvp);
@@ -497,8 +495,8 @@ int mencrypt(char *virtual_addr, int len) {
       *slider = *slider ^ 0xFF;
       slider++;
     }
-    char * kvp = translate_and_set(mypd, slider-PGSIZE);
-    if (!kvp) {
+    char * kvp_translated = translate_and_set(mypd, slider-PGSIZE);
+    if (!kvp_translated) {
       cprintf("p4Debug: translate failed!");
       return -1;
     }
